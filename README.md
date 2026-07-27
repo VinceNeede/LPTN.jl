@@ -25,9 +25,7 @@ Pkg.develop(url="https://github.com/VinceNeede/LPTN.jl")
 ## Quick example
 
 ```julia
-using LPTN, TensorKit
-using MPSKit: FiniteMPOHamiltonian  # LPTN re-exports expectation_value/environments, but
-                                    # constructing a Hamiltonian is still an MPSKit-level task
+using LPTN, TensorKit, MPSKit  # FiniteLPTN is a FiniteMPS, so its whole API is MPSKit's
 
 # a chain of 5 sites, each with physical space ℂ^2, Kraus space ℂ^2,
 # and virtual bond dimension up to 3
@@ -35,13 +33,21 @@ using MPSKit: FiniteMPOHamiltonian  # LPTN re-exports expectation_value/environm
 
 lptn_trace(ψ)                      # Tr[ρ], not norm(ψ) -- see "Design notes" below
 
-O = randn(ComplexF64, ℂ^2, ℂ^2)
+O0 = randn(ComplexF64, ℂ^2, ℂ^2)
+O = O0 + O0'                       # Hermitian, so Tr[ρ] is conserved under real-time evolution
 expectation_value(ψ, 3 => O)       # Tr[ρ O] / Tr[ρ] at site 3
 expectation_value(ψ, (2, 4) => O ⊗ O)  # also works for non-adjacent multi-site operators
 
 H = FiniteMPOHamiltonian(fill(ℂ^2, 5), i => O for i in 1:5)
 envs = environments(ψ, H)          # reuse across repeated calls, e.g. across a sweep
 expectation_value(ψ, H, envs)      # works for a full FiniteMPOHamiltonian / FiniteMPO too
+
+ψ2, envs2 = timestep(ψ, H, 0.0, 0.01, TDVP())      # real-time evolution
+ψ3, envs3 = timestep(ψ, H, 0.0, 0.01, TDVP2(; trscheme = truncrank(4)))  # two-site, with truncation
+
+# finite temperature: starting from an infinite-temperature purification (identity map
+# between physical and Kraus space) and evolving in imaginary time by β/2 gives ρ = e^{-βH}/Z
+# exactly -- see test/timestep.jl for the full worked-out recipe
 ```
 
 ## API overview
@@ -64,6 +70,13 @@ expectation_value(ψ, H, envs)      # works for a full FiniteMPOHamiltonian / Fi
   or a full `FiniteMPOHamiltonian` — all without any LPTN-specific code, see "Design
   notes" below. `MPSKit.environments`, which these build on to avoid recomputing the
   same boundary contractions repeatedly (e.g. across a sweep), is reused the same way.
+- `MPSKit.timestep`/`TDVP`/`TDVP2` (not re-exported, `using MPSKit` for these): real- and
+  imaginary-time evolution under a `FiniteMPOHamiltonian`, again with no LPTN-specific
+  code. Imaginary time from an infinite-temperature purification gives finite-temperature
+  states; see "Design notes" below and `test/timestep.jl` for the full recipe.
+- `MPSKit.changebonds`/`OptimalExpand`: grows the bond dimension while leaving the state
+  itself unchanged (verified: `Tr[ρ]` is preserved exactly), which is what makes it safe
+  to combine with single-site TDVP (which cannot grow bond dimension on its own).
 
 ## Design notes
 
@@ -105,6 +118,22 @@ time via `MPSKit.transfer_left`/`transfer_right`, which is exactly the same
 `GenericMPSTensor{S,3}`-specific "density matrix transfer" machinery — so environments
 built this way are just as valid for an LPTN chain as for a plain MPS, without change.
 
+**Time evolution and bond expansion need no LPTN-specific code either.** TDVP's effective
+single-site Hamiltonian action has two implementations in MPSKit: a Jordan-block-optimized
+one hardcoded to rank-2 (`MPSTensor`) tensors, and a fully generic fallback
+(`MPO_AC_Hamiltonian`) with an explicit `GenericMPSTensor{<:Any,3}` method. Since
+`FiniteLPTN`'s tensors don't match the Jordan-restricted signature, Julia dispatches to the
+generic fallback automatically — slower (it can't exploit the Hamiltonian's sparse Jordan
+structure), but correct, applying the Hamiltonian only to the physical leg and leaving the
+Kraus leg untouched, exactly like `expectation_value`. TDVP2's two-site update has a matching
+rank-`(3,3)` fallback in `MPO_AC2_Hamiltonian`, and `OptimalExpand`'s bond-growing step
+builds entirely on this same `MPO_AC_Hamiltonian`/`TransferMatrix` machinery plus rank-agnostic
+QR/LQ/null-space utilities. All three were verified numerically (not just by source
+inspection): real- and imaginary-time TDVP/TDVP2 conserve `Tr[ρ]` to machine precision for a
+Hermitian Hamiltonian, `OptimalExpand` grows bond dimension while leaving `Tr[ρ]` exactly
+unchanged, and imaginary-time evolution from an infinite-temperature purification reproduces
+`e^{-βH}/Z` to machine precision against direct matrix exponentiation.
+
 ## Testing
 
 ```julia
@@ -119,6 +148,11 @@ Tests are split by topic under `test/`:
 - `expectation_values.jl` — `expectation_value` for single-site, two-site
   (adjacent/non-adjacent), and `FiniteMPOHamiltonian` operators, each cross-checked
   against a brute-force contraction of the purified density operator.
+- `timestep.jl` — `Tr[ρ]` conservation under `TDVP`/`TDVP2` and bond growth under
+  `OptimalExpand` (all with a genuinely Hermitian Hamiltonian — a non-Hermitian one
+  would not conserve `Tr[ρ]` even under exact evolution, so the check would be
+  meaningless), and finite-temperature imaginary-time evolution cross-checked against
+  direct matrix exponentiation of `e^{-βH}`.
 - `mpskit_assumptions.jl` — pins down the specific MPSKit behaviors this package depends
   on but does not own (e.g. `FiniteMPS`'s genericity over site-tensor rank), so a future
   MPSKit release that changes them fails loudly here rather than silently corrupting
@@ -126,7 +160,8 @@ Tests are split by topic under `test/`:
 
 ## Roadmap
 
-- [ ] Applying a quantum channel (Kraus operators) to an `LPTN` tensor
+- [x] Time evolution (real/imaginary time via `TDVP`/`TDVP2`, bond growth via
+      `OptimalExpand`) and finite temperature — all reused unchanged from MPSKit
+- [ ] Applying a dissipative quantum channel (Kraus operators) to an `LPTN` tensor
 - [ ] Truncation/compression of the Kraus bond
-- [ ] Time evolution (dissipative dynamics)
 - [ ] CI

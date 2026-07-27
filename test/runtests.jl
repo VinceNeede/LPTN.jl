@@ -7,5 +7,6 @@ using MPSKit
     include("tensors.jl")
     include("states.jl")
     include("expectation_values.jl")
+    include("timestep.jl")
     include("mpskit_assumptions.jl")
 end
