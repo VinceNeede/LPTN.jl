@@ -10,6 +10,16 @@ purification: a matrix product state `Λ` over the enlarged Hilbert space
 one extra "Kraus" (purification) leg on top of the usual physical and left/right virtual
 legs of an MPS tensor.
 
+**Using MPSKit means several of its functions already work on `FiniteLPTN`.**
+`LPTNTensor` and `FiniteLPTN` are defined as thin aliases over `MPSKit.GenericMPSTensor`/
+`FiniteMPS`, so MPSKit's own machinery — `expectation_value`, real/imaginary-time evolution
+(`TDVP`/`TDVP2`), bond expansion (`OptimalExpand`), and state compression
+(`approximate`/`DMRG`/`DMRG2`) — already applies to `FiniteLPTN` unchanged. Each piece was
+traced through its actual dispatch and cross-checked numerically against brute-force
+contraction (see `test/`) rather than assumed to work by analogy. The next step
+(see "Roadmap") is the first place genuinely new code is needed: constructing a
+dissipative generator acting on the physical+Kraus legs.
+
 **Status:** early-stage / work in progress. This README doubles as the package's
 documentation until there is enough content to warrant splitting it out.
 
@@ -31,7 +41,7 @@ using LPTN, TensorKit, MPSKit  # FiniteLPTN is a FiniteMPS, so its whole API is 
 # and virtual bond dimension up to 3
 ψ = FiniteLPTN(5, ℂ^2, ℂ^2, ℂ^3)
 
-lptn_trace(ψ)                      # Tr[ρ], not norm(ψ) -- see "Design notes" below
+lptn_trace(ψ)                      # Tr[ρ] -- note this is norm(ψ)^2, not norm(ψ)
 
 O0 = randn(ComplexF64, ℂ^2, ℂ^2)
 O = O0 + O0'                       # Hermitian, so Tr[ρ] is conserved under real-time evolution
@@ -66,92 +76,25 @@ expectation_value(ψ, H, envs)      # works for a full FiniteMPOHamiltonian / Fi
   so the whole chain reuses `FiniteMPS`'s lazily computed left/right/center gauges as-is.
 - [`lptn_trace`](src/states.jl): `Tr[ρ]` for a `FiniteLPTN` chain.
 
-None of MPSKit's own API (`expectation_value`, `environments`, `timestep`/`TDVP`/`TDVP2`,
-`changebonds`/`OptimalExpand`, ...) is re-exported here — since `FiniteLPTN` *is* a
-`FiniteMPS`, essentially all of it applies already (see "Design notes"), and re-exporting
-an ever-growing, arbitrary subset would just be a maintenance liability against a
-fast-moving dependency. `using MPSKit` alongside `using LPTN` for any of it:
+None of MPSKit's own API is re-exported here — re-exporting an ever-growing, arbitrary
+subset would just be a maintenance liability against a fast-moving dependency. Add
+`using MPSKit` alongside `using LPTN` for any of the following:
 
 - `expectation_value`: `Tr[ρ O] / Tr[ρ]`. Works for a local operator (single-site,
   two-site, or arbitrary/non-adjacent multi-site), a `FiniteMPO`, or a full
-  `FiniteMPOHamiltonian` — all without any LPTN-specific code, see "Design notes" below.
-  `environments`, which these build on to avoid recomputing the same boundary
-  contractions repeatedly (e.g. across a sweep), is reused the same way.
+  `FiniteMPOHamiltonian`, cross-checked against brute-force contraction in
+  `test/expectation_values.jl`. `environments`, which these build on to avoid
+  recomputing the same boundary contractions repeatedly (e.g. across a sweep), is
+  reused the same way.
 - `timestep`/`TDVP`/`TDVP2`: real- and imaginary-time evolution under a
-  `FiniteMPOHamiltonian`, again with no LPTN-specific code. Imaginary time from an
-  infinite-temperature purification gives finite-temperature states; see "Design notes"
-  below and `test/timestep.jl` for the full recipe.
+  `FiniteMPOHamiltonian`. Imaginary time from an infinite-temperature purification gives
+  finite-temperature states; see `test/timestep.jl` for the full recipe.
 - `changebonds`/`OptimalExpand`: grows the bond dimension while leaving the state itself
   unchanged (verified: `Tr[ρ]` is preserved exactly), which is what makes it safe to
   combine with single-site TDVP (which cannot grow bond dimension on its own).
 - `approximate`/`DMRG`/`DMRG2`: variationally fits a (possibly smaller-bond-dimension)
   `FiniteLPTN` to approximate `O * ϕ` for a `FiniteMPO`/`FiniteMPOHamiltonian` `O` and
-  state `ϕ` — again with no LPTN-specific code, see "Design notes" below.
-
-## Design notes
-
-**Why `LPTNTensor`/`FiniteLPTN` are aliases, not new types.** `MPSKit.GenericMPSTensor{S,N}`
-and `MPSKit.FiniteMPS{A,B}` are already generic over the site-tensor rank `N` — this isn't
-incidental, MPSKit's own transfer-matrix code (`transfer_left`/`transfer_right` in
-`transfermatrix/transfer.jl`) has methods for `GenericMPSTensor{S,3}` explicitly labeled
-*"Matrix Product Density Operators"* / *"density matrix transfer"*, and PEPSKit.jl reuses
-the same pattern for its boundary MPS (with `N` varying per algorithm). So rather than
-reimplementing gauge machinery or writing LPTN-specific transfer matrices, `LPTNTensor` and
-`FiniteLPTN` are defined as aliases matching the existing generic types, and all of the
-canonicalization, `expectation_value`, etc. machinery is inherited unchanged.
-
-One consequence: since these are aliases rather than distinct types, defining new methods
-on them is fine (the function is ours), but *overloading* an existing Base/MPSKit function
-(e.g. `norm`, `tr`) directly on `FiniteLPTN` would be type piracy — the same tensor shape
-is used by unrelated code (e.g. PEPSKit's boundary MPS), so it isn't "our" type to
-redefine behavior on. This is why `Tr[ρ]` is exposed as the new function `lptn_trace`
-rather than by overloading `norm`.
-
-**`Tr[ρ] = norm(ψ)^2`, not `norm(ψ)`.** Tracing the purified density operator sums `|Λ|²`
-over *both* physical and Kraus indices — the squared 2-norm of `ψ` as a plain vector, not
-the (unsquared) MPS norm. `lptn_trace` is implemented as `norm(ψ)^2` rather than
-`dot(ψ, ψ)`, since `MPSKit.FiniteMPS`'s `norm` is an O(1) read of the gauge-center tensor,
-while `dot` does a full O(N) chain contraction that gives the same answer more slowly.
-
-**Why `expectation_value` needs no LPTN-specific code.** For an operator `O` acting only
-on the physical factor at a site (identity on that site's Kraus leg and everywhere else),
-the purification identity gives `Tr[ρO] = ⟨Λ|(O⊗1_kraus)|Λ⟩`. MPSKit's canonical-gauge
-expectation-value algorithm computes exactly `⟨Λ|(O_i ⊗ 1_{everything else it doesn't
-touch})|Λ⟩ / ⟨Λ|Λ⟩` for any `GenericMPSTensor`-based chain, regardless of what the "extra"
-legs represent. These coincide as soon as the Kraus leg is among the legs the operator
-doesn't touch — which it always is here, since `O` is only ever given the physical space.
-
-This holds not just for the single/two-site and arbitrary-multi-site `Pair` forms, but
-also for a full `FiniteMPO`/`FiniteMPOHamiltonian`: their `expectation_value` builds
-`MPSKit.environments` (the `GL`/`GR` boundary tensors) by growing them one site at a
-time via `MPSKit.transfer_left`/`transfer_right`, which is exactly the same
-`GenericMPSTensor{S,3}`-specific "density matrix transfer" machinery — so environments
-built this way are just as valid for an LPTN chain as for a plain MPS, without change.
-
-**Time evolution and bond expansion need no LPTN-specific code either.** TDVP's effective
-single-site Hamiltonian action has two implementations in MPSKit: a Jordan-block-optimized
-one hardcoded to rank-2 (`MPSTensor`) tensors, and a fully generic fallback
-(`MPO_AC_Hamiltonian`) with an explicit `GenericMPSTensor{<:Any,3}` method. Since
-`FiniteLPTN`'s tensors don't match the Jordan-restricted signature, Julia dispatches to the
-generic fallback automatically — slower (it can't exploit the Hamiltonian's sparse Jordan
-structure), but correct, applying the Hamiltonian only to the physical leg and leaving the
-Kraus leg untouched, exactly like `expectation_value`. TDVP2's two-site update has a matching
-rank-`(3,3)` fallback in `MPO_AC2_Hamiltonian`, and `OptimalExpand`'s bond-growing step
-builds entirely on this same `MPO_AC_Hamiltonian`/`TransferMatrix` machinery plus rank-agnostic
-QR/LQ/null-space utilities. All three were verified numerically (not just by source
-inspection): real- and imaginary-time TDVP/TDVP2 conserve `Tr[ρ]` to machine precision for a
-Hermitian Hamiltonian, `OptimalExpand` grows bond dimension while leaving `Tr[ρ]` exactly
-unchanged, and imaginary-time evolution from an infinite-temperature purification reproduces
-`e^{-βH}/Z` to machine precision against direct matrix exponentiation.
-
-**`approximate` needs no LPTN-specific code either.** `approximate!`'s `DMRG`/`DMRG2`
-algorithms are built on `AC_projection`/`AC2_projection`, which are themselves thin
-wrappers around the same `MPO_AC_Hamiltonian`/`MPO_AC2_Hamiltonian` machinery already
-covered above — so the same rank-`3`/rank-`(3,3)` fallbacks apply here too. Verified by
-fitting a same-bond-dimension `FiniteLPTN` to the identity `FiniteMPO` applied to another
-LPTN chain: `DMRG2` converges in 2 iterations and recovers the original state essentially
-exactly (`dot(ψ_fit, ϕ) ≈ 1`), as expected since no truncation is actually needed at
-matching bond dimension.
+  state `ϕ`; see `test/approximate.jl`.
 
 ## Testing
 
@@ -184,15 +127,9 @@ Tests are split by topic under `test/`:
 - [x] Time evolution (real/imaginary time via `TDVP`/`TDVP2`, bond growth via
       `OptimalExpand`), finite temperature, and state compression via
       `approximate`/`DMRG`/`DMRG2` — all reused unchanged from MPSKit
-- [ ] Constructing a dissipative (Lindbladian) generator acting on the physical+Kraus
-      legs — the shared prerequisite for either option below
-- [ ] Either: Trotterized application of local Kraus/channel operators (repeated small
-      time steps, similar to what `TDVP` already does for a Hamiltonian), or: a direct
-      steady-state search via non-Hermitian DMRG, targeting the eigenvalue with the
-      largest real part (`:LR`) of the generator, since a physical Lindbladian's unique
-      steady state sits at exactly `λ = 0`. MPSKit's DMRG currently hardcodes the `:SR`
-      selector (and defaults its eigensolver to `ishermitian=true`, though that part is
-      already configurable elsewhere in MPSKit), so this route would need either a small
-      upstream change or a local workaround.
+- [ ] Constructing a dissipative (Lindbladian) generator acting on the physical+Kraus legs
+- [ ] Trotterized application of local Kraus/channel operators (repeated small time
+      steps, similar to what `TDVP` already does for a Hamiltonian), i.e. dissipative
+      dynamics — steady-state search is out of scope for now
 - [ ] Truncation/compression of the Kraus bond
 - [ ] CI
