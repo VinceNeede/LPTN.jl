@@ -84,6 +84,9 @@ fast-moving dependency. `using MPSKit` alongside `using LPTN` for any of it:
 - `changebonds`/`OptimalExpand`: grows the bond dimension while leaving the state itself
   unchanged (verified: `Tr[ρ]` is preserved exactly), which is what makes it safe to
   combine with single-site TDVP (which cannot grow bond dimension on its own).
+- `approximate`/`DMRG`/`DMRG2`: variationally fits a (possibly smaller-bond-dimension)
+  `FiniteLPTN` to approximate `O * ϕ` for a `FiniteMPO`/`FiniteMPOHamiltonian` `O` and
+  state `ϕ` — again with no LPTN-specific code, see "Design notes" below.
 
 ## Design notes
 
@@ -141,6 +144,15 @@ Hermitian Hamiltonian, `OptimalExpand` grows bond dimension while leaving `Tr[ρ
 unchanged, and imaginary-time evolution from an infinite-temperature purification reproduces
 `e^{-βH}/Z` to machine precision against direct matrix exponentiation.
 
+**`approximate` needs no LPTN-specific code either.** `approximate!`'s `DMRG`/`DMRG2`
+algorithms are built on `AC_projection`/`AC2_projection`, which are themselves thin
+wrappers around the same `MPO_AC_Hamiltonian`/`MPO_AC2_Hamiltonian` machinery already
+covered above — so the same rank-`3`/rank-`(3,3)` fallbacks apply here too. Verified by
+fitting a same-bond-dimension `FiniteLPTN` to the identity `FiniteMPO` applied to another
+LPTN chain: `DMRG2` converges in 2 iterations and recovers the original state essentially
+exactly (`dot(ψ_fit, ϕ) ≈ 1`), as expected since no truncation is actually needed at
+matching bond dimension.
+
 ## Testing
 
 ```julia
@@ -160,6 +172,8 @@ Tests are split by topic under `test/`:
   would not conserve `Tr[ρ]` even under exact evolution, so the check would be
   meaningless), and finite-temperature imaginary-time evolution cross-checked against
   direct matrix exponentiation of `e^{-βH}`.
+- `approximate.jl` — `approximate`/`DMRG2` recovers a `FiniteLPTN` from the identity
+  `FiniteMPO` applied to it, at matching bond dimension.
 - `mpskit_assumptions.jl` — pins down the specific MPSKit behaviors this package depends
   on but does not own (e.g. `FiniteMPS`'s genericity over site-tensor rank), so a future
   MPSKit release that changes them fails loudly here rather than silently corrupting
@@ -168,7 +182,17 @@ Tests are split by topic under `test/`:
 ## Roadmap
 
 - [x] Time evolution (real/imaginary time via `TDVP`/`TDVP2`, bond growth via
-      `OptimalExpand`) and finite temperature — all reused unchanged from MPSKit
-- [ ] Applying a dissipative quantum channel (Kraus operators) to an `LPTN` tensor
+      `OptimalExpand`), finite temperature, and state compression via
+      `approximate`/`DMRG`/`DMRG2` — all reused unchanged from MPSKit
+- [ ] Constructing a dissipative (Lindbladian) generator acting on the physical+Kraus
+      legs — the shared prerequisite for either option below
+- [ ] Either: Trotterized application of local Kraus/channel operators (repeated small
+      time steps, similar to what `TDVP` already does for a Hamiltonian), or: a direct
+      steady-state search via non-Hermitian DMRG, targeting the eigenvalue with the
+      largest real part (`:LR`) of the generator, since a physical Lindbladian's unique
+      steady state sits at exactly `λ = 0`. MPSKit's DMRG currently hardcodes the `:SR`
+      selector (and defaults its eigensolver to `ishermitian=true`, though that part is
+      already configurable elsewhere in MPSKit), so this route would need either a small
+      upstream change or a local workaround.
 - [ ] Truncation/compression of the Kraus bond
 - [ ] CI
