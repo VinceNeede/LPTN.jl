@@ -11,6 +11,5 @@ include("states.jl")
 
 export lptn_physicalspace, krausspace, combinedspace, Defaults
 export FiniteLPTN, lptn_trace
-export expectation_value, environments
 
 end

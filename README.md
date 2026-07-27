@@ -65,18 +65,25 @@ expectation_value(ψ, H, envs)      # works for a full FiniteMPOHamiltonian / Fi
   `MPSKit.FiniteMPS{<:LPTNTensor{S}, <:MPSKit.MPSBondTensor{S}}` — again not a new type,
   so the whole chain reuses `FiniteMPS`'s lazily computed left/right/center gauges as-is.
 - [`lptn_trace`](src/states.jl): `Tr[ρ]` for a `FiniteLPTN` chain.
-- `expectation_value` (from MPSKit, re-exported): `Tr[ρ O] / Tr[ρ]`. Works for a local
-  operator (single-site, two-site, or arbitrary/non-adjacent multi-site), a `FiniteMPO`,
-  or a full `FiniteMPOHamiltonian` — all without any LPTN-specific code, see "Design
-  notes" below. `MPSKit.environments`, which these build on to avoid recomputing the
-  same boundary contractions repeatedly (e.g. across a sweep), is reused the same way.
-- `MPSKit.timestep`/`TDVP`/`TDVP2` (not re-exported, `using MPSKit` for these): real- and
-  imaginary-time evolution under a `FiniteMPOHamiltonian`, again with no LPTN-specific
-  code. Imaginary time from an infinite-temperature purification gives finite-temperature
-  states; see "Design notes" below and `test/timestep.jl` for the full recipe.
-- `MPSKit.changebonds`/`OptimalExpand`: grows the bond dimension while leaving the state
-  itself unchanged (verified: `Tr[ρ]` is preserved exactly), which is what makes it safe
-  to combine with single-site TDVP (which cannot grow bond dimension on its own).
+
+None of MPSKit's own API (`expectation_value`, `environments`, `timestep`/`TDVP`/`TDVP2`,
+`changebonds`/`OptimalExpand`, ...) is re-exported here — since `FiniteLPTN` *is* a
+`FiniteMPS`, essentially all of it applies already (see "Design notes"), and re-exporting
+an ever-growing, arbitrary subset would just be a maintenance liability against a
+fast-moving dependency. `using MPSKit` alongside `using LPTN` for any of it:
+
+- `expectation_value`: `Tr[ρ O] / Tr[ρ]`. Works for a local operator (single-site,
+  two-site, or arbitrary/non-adjacent multi-site), a `FiniteMPO`, or a full
+  `FiniteMPOHamiltonian` — all without any LPTN-specific code, see "Design notes" below.
+  `environments`, which these build on to avoid recomputing the same boundary
+  contractions repeatedly (e.g. across a sweep), is reused the same way.
+- `timestep`/`TDVP`/`TDVP2`: real- and imaginary-time evolution under a
+  `FiniteMPOHamiltonian`, again with no LPTN-specific code. Imaginary time from an
+  infinite-temperature purification gives finite-temperature states; see "Design notes"
+  below and `test/timestep.jl` for the full recipe.
+- `changebonds`/`OptimalExpand`: grows the bond dimension while leaving the state itself
+  unchanged (verified: `Tr[ρ]` is preserved exactly), which is what makes it safe to
+  combine with single-site TDVP (which cannot grow bond dimension on its own).
 
 ## Design notes
 
