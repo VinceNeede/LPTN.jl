@@ -26,8 +26,8 @@ end
     # brute-force trace of the purified density operator (sum |Λ|^2 over every physical
     # and Kraus index), which is the actual definition of Tr[ρ].
     P, K, Vb = ℂ^2, ℂ^2, ℂ^2
-    A1 = rand(LPTN.LPTNMapSpace(oneunit(Vb), P, K, Vb))
-    A2 = rand(LPTN.LPTNMapSpace(Vb, P, K, oneunit(Vb)))
+    A1 = rand(oneunit(Vb) ⊗ P ⊗ K ← Vb)
+    A2 = rand(Vb ⊗ P ⊗ K ← oneunit(Vb))
     ψ = FiniteMPS([A1, A2])
 
     @test lptn_trace(ψ) ≈ norm(ψ)^2

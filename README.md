@@ -64,9 +64,8 @@ expectation_value(ψ, H, envs)      # works for a full FiniteMPOHamiltonian / Fi
 
 - [`LPTN.LPTNTensor`](src/tensors.jl): a single-site LPTN tensor, `Vₗ ⊗ P ⊗ K ← Vᵣ`.
   Defined as `MPSKit.GenericMPSTensor{S,3}` — not a new type, so it inherits any generic
-  MPSKit machinery written for that type for free.
-- [`LPTN.LPTNMapSpace`](src/tensors.jl): describes the space of an `LPTNTensor`; use
-  `rand`/`randn`/`zeros` on one to build a tensor of that shape.
+  MPSKit machinery written for that type for free. Build one directly with plain
+  TensorKit constructors, e.g. `rand(Vₗ ⊗ P ⊗ K ← Vᵣ)`.
 - [`lptn_physicalspace`](src/tensors.jl), [`krausspace`](src/tensors.jl),
   [`combinedspace`](src/tensors.jl): space accessors, defined both on a single
   `LPTNTensor` and on a whole `FiniteLPTN` chain (site accessors read whatever gauge is
@@ -104,7 +103,7 @@ Pkg.test("LPTN")
 ```
 
 Tests are split by topic under `test/`:
-- `tensors.jl` — `LPTNTensor`/`LPTNMapSpace` construction and space accessors.
+- `tensors.jl` — `LPTNTensor` construction and space accessors.
 - `states.jl` — `FiniteLPTN` construction, site accessors, and `lptn_trace` (cross-checked
   against a brute-force contraction of the purified density operator).
 - `expectation_values.jl` — `expectation_value` for single-site, two-site
