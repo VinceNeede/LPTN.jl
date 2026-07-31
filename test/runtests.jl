@@ -8,6 +8,7 @@ using MPSKit
     include("states.jl")
     include("expectation_values.jl")
     include("timestep.jl")
+    include("lindbladian.jl")
     include("approximate.jl")
     include("mpskit_assumptions.jl")
 end
