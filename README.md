@@ -16,9 +16,13 @@ legs of an MPS tensor.
 (`TDVP`/`TDVP2`), bond expansion (`OptimalExpand`), and state compression
 (`approximate`/`DMRG`/`DMRG2`) — already applies to `FiniteLPTN` unchanged. Each piece was
 traced through its actual dispatch and cross-checked numerically against brute-force
-contraction (see `test/`) rather than assumed to work by analogy. The next step
-(see "Roadmap") is the first place genuinely new code is needed: constructing a
-dissipative generator acting on the physical+Kraus legs.
+contraction (see `test/`) rather than assumed to work by analogy.
+
+Dissipative dynamics are handled by `FiniteLindbladian` (a `FiniteMPOHamiltonian` plus
+on-site jump operators): its dissipator is exponentiated exactly into a bundled Kraus
+isometry (via the Choi–Jamiołkowski isomorphism, not a first-order `O(dt)` expansion),
+which `apply_kraus!` applies to a `FiniteLPTN` in place, growing each site's Kraus leg.
+See the Quick example below and `test/lindbladian.jl` for the brute-force cross-checks.
 
 **Status:** early-stage / work in progress. This README doubles as the package's
 documentation until there is enough content to warrant splitting it out.
@@ -58,6 +62,14 @@ expectation_value(ψ, H, envs)      # works for a full FiniteMPOHamiltonian / Fi
 # finite temperature: starting from an infinite-temperature purification (identity map
 # between physical and Kraus space) and evolving in imaginary time by β/2 gives ρ = e^{-βH}/Z
 # exactly -- see test/timestep.jl for the full worked-out recipe
+
+# dissipative dynamics: a Lindbladian is H plus on-site jump operators (site => L pairs)
+L = randn(ComplexF64, ℂ^2, ℂ^2)
+ℒ = FiniteLindbladian(H, (n => L for n in 1:5)...)   # same jump operator at every site
+
+dt = 0.01
+Ks = [kraus_operators(sum(dissipator_matrices(jump_operators(ℒ, n))), dt) for n in 1:5]
+apply_kraus!(ψ, Ks)   # grows every site's Kraus leg in place; Tr[ρ] is preserved exactly
 ```
 
 ## API overview
@@ -74,6 +86,18 @@ expectation_value(ψ, H, envs)      # works for a full FiniteMPOHamiltonian / Fi
   `MPSKit.FiniteMPS{<:LPTNTensor{S}, <:MPSKit.MPSBondTensor{S}}` — again not a new type,
   so the whole chain reuses `FiniteMPS`'s lazily computed left/right/center gauges as-is.
 - [`lptn_trace`](src/states.jl): `Tr[ρ]` for a `FiniteLPTN` chain.
+- [`FiniteLindbladian`](src/lindbladian.jl): a `FiniteMPOHamiltonian` plus on-site jump
+  operators (`site => L` pairs, [`jump_operators`](src/lindbladian.jl) to read them back).
+- [`dissipator_matrices`](src/lindbladian.jl): turns a site's jump operators into
+  `TensorMap`s on the vectorized (doubled) space `P⊗P' ← P⊗P'`; sum them for that site's
+  full dissipator generator.
+- [`kraus_operators`](src/lindbladian.jl): exponentiates a (summed) dissipator generator
+  over a timestep `dt` into a single bundled Kraus isometry `P⊗Kaux ← P`, via the
+  Choi–Jamiołkowski isomorphism — exactly trace-preserving for any `dt`, not just to
+  first order.
+- [`apply_kraus`](src/lindbladian.jl)/[`apply_kraus!`](src/lindbladian.jl): apply a
+  bundled Kraus isometry to a single `LPTNTensor`, or one per site to a whole `FiniteLPTN`
+  in place, growing each site's Kraus leg.
 
 None of MPSKit's own API is re-exported here — re-exporting an ever-growing, arbitrary
 subset would just be a maintenance liability against a fast-moving dependency. Add
@@ -116,6 +140,11 @@ Tests are split by topic under `test/`:
   direct matrix exponentiation of `e^{-βH}`.
 - `approximate.jl` — `approximate`/`DMRG2` recovers a `FiniteLPTN` from the identity
   `FiniteMPO` applied to it, at matching bond dimension.
+- `lindbladian.jl` — `FiniteLindbladian` construction, `dissipator_matrices` and
+  `kraus_operators` cross-checked against brute-force dense computation of the Lindblad
+  dissipator/exact channel, and `apply_kraus`/`apply_kraus!` cross-checked against a
+  brute-force contraction of the purified density operator with the channel applied
+  classically at each site.
 - `mpskit_assumptions.jl` — pins down the specific MPSKit behaviors this package depends
   on but does not own (e.g. `FiniteMPS`'s genericity over site-tensor rank), so a future
   MPSKit release that changes them fails loudly here rather than silently corrupting
@@ -126,9 +155,11 @@ Tests are split by topic under `test/`:
 - [x] Time evolution (real/imaginary time via `TDVP`/`TDVP2`, bond growth via
       `OptimalExpand`), finite temperature, and state compression via
       `approximate`/`DMRG`/`DMRG2` — all reused unchanged from MPSKit
-- [ ] Constructing a dissipative (Lindbladian) generator acting on the physical+Kraus legs
-- [ ] Trotterized application of local Kraus/channel operators (repeated small time
-      steps, similar to what `TDVP` already does for a Hamiltonian), i.e. dissipative
-      dynamics — steady-state search is out of scope for now
+- [x] `FiniteLindbladian` (Hamiltonian + on-site jump operators), exact Kraus operators
+      via Choi-matrix exponentiation, and `apply_kraus!` to grow a `FiniteLPTN`'s Kraus
+      legs under a per-site channel
+- [ ] Trotterizing coherent (`H`, via `TDVP`) and dissipative (`apply_kraus!`) evolution
+      together into a single repeated-timestep loop — steady-state search is out of
+      scope for now
 - [ ] Truncation/compression of the Kraus bond
 - [ ] CI
